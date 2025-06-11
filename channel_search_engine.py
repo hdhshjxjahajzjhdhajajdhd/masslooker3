@@ -2,10 +2,13 @@ import asyncio
 import logging
 import time
 import random
-from datetime import datetime
+from datetime import datetime, timedelta
 from typing import List, Tuple, Set, Optional
 import re
 import nest_asyncio
+import os
+import json
+import atexit
 
 nest_asyncio.apply()
 
@@ -40,10 +43,8 @@ except ImportError as e:
     logger.error(f"Ошибка импорта библиотек: {e}")
     raise
 
-# Импорт модуля базы данных
 from database import db
 
-# Глобальные переменные
 search_active = False
 found_channels: Set[str] = set()
 driver = None
@@ -59,7 +60,6 @@ search_state = {
     'search_session_id': None
 }
 
-# Файл для сохранения состояния поиска
 SEARCH_STATE_FILE = 'search_state.json'
 
 def save_search_state():
@@ -105,7 +105,6 @@ def load_search_state():
             
             search_state['search_session_id'] = state_data.get('search_session_id')
             
-            # Загружаем найденные каналы
             found_channels_list = state_data.get('found_channels', [])
             found_channels = set(found_channels_list)
             
@@ -134,7 +133,6 @@ def reset_search_state():
     
     found_channels = set()
     
-    # Удаляем файл состояния
     try:
         if os.path.exists(SEARCH_STATE_FILE):
             os.remove(SEARCH_STATE_FILE)
@@ -161,7 +159,6 @@ async def load_search_state_from_db():
         if saved_state:
             search_state.update(saved_state)
             
-            # Преобразуем строки обратно в datetime объекты
             if search_state.get('last_search_time') and isinstance(search_state['last_search_time'], str):
                 search_state['last_search_time'] = datetime.fromisoformat(search_state['last_search_time'])
             
@@ -184,7 +181,6 @@ def should_continue_from_saved_state():
     if not search_state.get('last_search_time'):
         return False
     
-    # Если последний поиск был менее 2 часов назад, продолжаем
     time_since_last = datetime.now() - search_state['last_search_time']
     return time_since_last < timedelta(hours=2)
 
@@ -209,15 +205,12 @@ def setup_driver():
     logger.info("Инициализация веб-драйвера...")
     
     try:
-        # Создаем драйвер с обработчиком закрытия
         driver = Driver(uc=True, headless=False)
         driver.set_window_size(600, 1200)
         
-        # Установка десктопного user-agent
         desktop_user_agent = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36"
         driver.execute_cdp_cmd('Network.setUserAgentOverride', {"userAgent": desktop_user_agent})
         
-        # Добавляем обработчик завершения процесса
         def cleanup_driver():
             try:
                 if driver:
@@ -227,7 +220,6 @@ def setup_driver():
         
         atexit.register(cleanup_driver)
         
-        # Проверка работоспособности драйвера
         driver.get("about:blank")
         logger.info("Веб-драйвер успешно инициализирован")
         
@@ -265,7 +257,6 @@ def wait_and_click_element(driver, selectors, timeout=30):
     element = wait_and_find_element(driver, selectors, timeout)
     if element:
         try:
-            # Ждем, пока элемент станет кликабельным
             if isinstance(selectors, str):
                 selectors = [selectors]
             
@@ -295,7 +286,6 @@ def navigate_to_channel_search(driver):
         driver.get("https://tgstat.ru/")
         time.sleep(3)
         
-        # Нажимаем на три полоски для открытия меню
         logger.info("Открываем меню...")
         menu_selectors = [
             'a.d-flex.d-lg-none.nav-user',
@@ -309,7 +299,6 @@ def navigate_to_channel_search(driver):
         
         time.sleep(2)
         
-        # Открываем выпадающее меню "Каталог"
         logger.info("Открываем каталог...")
         catalog_selectors = [
             '#topnav-catalog',
@@ -324,7 +313,6 @@ def navigate_to_channel_search(driver):
         
         time.sleep(2)
         
-        # Нажимаем на "Поиск каналов"
         logger.info("Переходим к поиску каналов...")
         search_selectors = [
             'a[href="/channels/search"]',
@@ -349,7 +337,6 @@ def search_channels(driver, keyword: str, topic: str, first_search: bool = False
     try:
         logger.info(f"Поиск каналов по ключевому слову: '{keyword}', тема: '{topic}'")
         
-        # Вводим ключевое слово
         keyword_input = wait_and_find_element(driver, [
             '#q',
             'input[name="q"]',
@@ -357,7 +344,6 @@ def search_channels(driver, keyword: str, topic: str, first_search: bool = False
         ])
         
         if keyword_input:
-            # Очищаем поле и вводим новое ключевое слово
             keyword_input.clear()
             time.sleep(1)
             keyword_input.send_keys(keyword)
@@ -368,7 +354,6 @@ def search_channels(driver, keyword: str, topic: str, first_search: bool = False
         
         time.sleep(1)
         
-        # Вводим тему
         topic_input = wait_and_find_element(driver, [
             '.select2-search__field',
             'input[role="searchbox"]',
@@ -388,9 +373,7 @@ def search_channels(driver, keyword: str, topic: str, first_search: bool = False
         
         time.sleep(2)
         
-        # Если это первый поиск, нужно отметить дополнительные опции
         if first_search:
-            # Отмечаем "также искать в описании"
             description_checkbox = wait_and_find_element(driver, [
                 '#inabout',
                 'input[name="inAbout"]',
@@ -403,7 +386,6 @@ def search_channels(driver, keyword: str, topic: str, first_search: bool = False
             
             time.sleep(1)
             
-            # Выбираем тип канала "публичный"
             channel_type_select = wait_and_find_element(driver, [
                 '#channeltype',
                 'select[name="channelType"]',
@@ -416,7 +398,6 @@ def search_channels(driver, keyword: str, topic: str, first_search: bool = False
             
             time.sleep(1)
         
-        # Нажимаем кнопку "Искать"
         search_button = wait_and_find_element(driver, [
             '#search-form-submit-btn',
             'button[type="button"].btn-primary',
@@ -430,14 +411,11 @@ def search_channels(driver, keyword: str, topic: str, first_search: bool = False
             logger.error("Не удалось найти кнопку поиска")
             return []
        
-        # Ждем загрузки результатов
         time.sleep(5)
         
-        # Извлекаем результаты
         channels = extract_channel_usernames(driver)
         logger.info(f"Найдено каналов: {len(channels)}")
         
-        # Сохраняем состояние после успешного поиска
         search_state['last_search_time'] = datetime.now()
         save_search_state()
         
@@ -452,12 +430,10 @@ def extract_channel_usernames(driver) -> List[str]:
     usernames = []
     
     try:
-        # Ждем появления результатов
         WebDriverWait(driver, 30).until(
             EC.presence_of_element_located((By.CSS_SELECTOR, '.card.peer-item-row, .peer-item-row'))
         )
         
-        # Ищем все карточки каналов
         channel_cards = driver.find_elements(By.CSS_SELECTOR, '.card.peer-item-row, .peer-item-row')
         
         if not channel_cards:
@@ -466,14 +442,11 @@ def extract_channel_usernames(driver) -> List[str]:
         
         for card in channel_cards:
             try:
-                # Ищем ссылку на канал
                 link_elements = card.find_elements(By.CSS_SELECTOR, 'a[href*="/channel/@"]')
                 
                 for link in link_elements:
                     href = link.get_attribute('href')
                     if href and '/channel/@' in href:
-                        # Извлекаем username из ссылки
-                        # Формат: https://tgstat.ru/channel/@username/stat
                         match = re.search(r'/channel/(@[^/]+)', href)
                         if match:
                             username = match.group(1)
@@ -501,24 +474,18 @@ async def check_channel_availability(client: TelegramClient, username: str) -> b
         if not username.startswith('@'):
             username = '@' + username
         
-        # Получаем информацию о канале
         entity = await client.get_entity(username)
         
-        # Проверяем, можно ли отправлять сообщения
         if hasattr(entity, 'broadcast') and entity.broadcast:
-            # Это канал, проверяем есть ли группа для обсуждений
             if hasattr(entity, 'linked_chat_id') and entity.linked_chat_id:
                 try:
-                    # Проверяем доступ к группе обсуждений
                     discussion_group = await client.get_entity(entity.linked_chat_id)
                     if hasattr(discussion_group, 'left') and discussion_group.left:
-                        # Нужно вступить в группу
                         return False
                     return True
                 except:
                     return False
             else:
-                # Нет группы обсуждений
                 return False
         
         return True
@@ -533,7 +500,6 @@ async def check_channel_availability(client: TelegramClient, username: str) -> b
 async def analyze_channel(channel_id: int) -> Tuple[List[str], List[str]]:
     """Анализ канала для определения тематики и ключевых слов"""
     try:
-        # Получаем клиент из bot_interface
         import bot_interface
         client = bot_interface.bot_data.get('telethon_client')
         
@@ -541,50 +507,57 @@ async def analyze_channel(channel_id: int) -> Tuple[List[str], List[str]]:
             logger.error("Telethon клиент не инициализирован в bot_interface")
             return [], []
         
-        # Получаем информацию о канале
         entity = await client.get_entity(channel_id)
         
-        # Собираем информацию для анализа
         channel_info = []
         
-        # Название канала
         if hasattr(entity, 'title'):
             channel_info.append(f"Название: {entity.title}")
         
-        # Описание канала
         if hasattr(entity, 'about') and entity.about:
             channel_info.append(f"Описание: {entity.about}")
         
-        # Получаем последние 20 постов БЕЗ ограничений
         posts_text = []
         async for message in client.iter_messages(entity, limit=20):
             if message.text:
-                posts_text.append(message.text)  # Убрали ограничение [:500]
+                posts_text.append(message.text)
         
-        # Добавляем ВСЕ 20 постов (убрали ограничение [:5])
         if posts_text:
             channel_info.append(f"Примеры постов: {' | '.join(posts_text)}")
         
-        # Объединяем всю информацию
         full_text = "\n".join(channel_info)
         
-        # Анализируем с помощью GPT-4
-        prompt = f"""Ты эксперт по анализу контента и тематической классификации. На основе предоставленных данных о Telegram канале определи:
+        prompt = f"""Ты эксперт по анализу контента и тематической классификации Telegram-каналов. На основе предоставленных данных о канале (название, описание и последние 20 постов) выполни следующие задачи:
 
 1. Сгенерируй список ключевых слов, которые могут использоваться в названиях похожих каналов.  
-- Ключевые слова должны быть напрямую связаны с основной темой канала и отражать его суть.  
-- Исключи слова, которые упоминаются лишь косвенно или в единичных случаях (например, если канал про спорт, но упомянул еду один раз, не включай "еда").  
-- Ключевые слова должны быть конкретными, релевантными и подходить для использования в названиях каналов. 
+- Ключевые слова должны **строго соответствовать основной тематике канала** и отражать его основную суть.  
+- Исключи слова, которые упоминаются косвенно, в единичных случаях или не являются центральными для контента (например, если канал про спорт, не включай слова, связанные с музыкой или путешествиями, если они упомянуты случайно).  
+- Ключевые слова должны быть **конкретными**, релевантными и подходящими для использования в названиях Telegram-каналов.  
+- Сфокусируйся только на темах, которые явно доминируют в контенте (например, для спортивного канала — тренировки, фитнес, спорт, атлетика, а не общие слова вроде "мотивация" или "жизнь").  
 
-2. Определи основную тему или темы канала из списка: ["Бизнес и стартапы", "Блоги", "Букмекерство", "Видео и фильмы", "Даркнет", "Дизайн", "Для взрослых", "Еда и кулинария", "Здоровье и Фитнес", "Игры", "Инстаграм", "Интерьер и строительство", "Искусство", "Картинки и фото", "Карьера", "Книги", "Криптовалюты", "Курсы и гайды", "Лингвистика", "Маркетинг, PR, реклама", "Медицина", "Мода и красота", "Музыка", "Новости и СМИ", "Образование", "Познавательное", "Политика", "Право", "Природа", "Продажи", "Психология", "Путешествия", "Религия", "Рукоделие", "Семья и дети", "Софт и приложения", "Спорт", "Технологии", "Транспорт", "Цитаты", "Шок-контент", "Эзотерика", "Экономика", "Эроктика", "Юмор и развлечения", "Другое"].
-- Укажи только те темы, которые прямо относятся к содержимому канала. Исключи темы, которые упоминаются косвенно.
-- Если канал охватывает несколько тем, укажи их все, но только если они являются основными.  
+2. Определи основную тему или темы канала из следующего списка: ["Бизнес и стартапы", "Блоги", "Букмекерство", "Видео и фильмы", "Даркнет", "Дизайн", "Для взрослых", "Еда и кулинария", "Здоровье и Фитнес", "Игры", "Инстаграм", "Интерьер и строительство", "Искусство", "Картинки и фото", "Карьера", "Книги", "Криптовалюты", "Курсы и гайды", "Лингвистика", "Маркетинг, PR, реклама", "Медицина", "Мода и красота", "Музыка", "Новости и СМИ", "Образование", "Познавательное", "Политика", "Право", "Природа", "Продажи", "Психология", "Путешествия", "Религия", "Рукоделие", "Семья и дети", "Софт и приложения", "Спорт", "Технологии", "Транспорт", "Цитаты", "Шок-контент", "Эзотерика", "Экономика", "Эроктика", "Юмор и развлечения", "Другое"].  
+- Укажи **только те темы, которые явно и непосредственно связаны с основным содержимым канала**.  - Исключи темы, которые упоминаются случайно, косвенно или не являются центральными (например, если канал про спорт, не включай "Музыку" или "Путешествия", если они упомянуты в одном посте).  
+- Если канал охватывает несколько тем, укажи их, но только если они **регулярно и явно** присутствуют в контенте. 
+- Если ни одна из тем списка не подходит, укажи "Другое".
+
+**Дополнительные указания:**  
+- Анализируй контент постов, чтобы определить доминирующие темы. **Пример**: если в постах канала про спорт есть одно упоминание музыки для тренировок, это **не делает музыку основной темой**.  
+- Приоритет отдавай темам, которые составляют не менее 80% контента (по смыслу, а не количеству постов).  
+- Если описание канала явно указывает на одну тему (например, "Канал про спорт и тренировки"), игнорируй случайные отклонения в постах, не связанные с этой темой.  
+
+**Пример:**  
+Если канал про спорт:  
+ТЕМЫ: Спорт, Здоровье и Фитнес  
+КЛЮЧЕВЫЕ_СЛОВА: спорт, фитнес, тренировки, атлетика, здоровье  
+
+Если в постах канала про спорт случайно упомянута музыка для тренировок или путешествие на спортивное событие, **не включай "Музыку" или "Путешествия" в темы**.  
 
 Формат ответа:  
-ТЕМЫ: тема1, тема2, тема3
-КЛЮЧЕВЫЕ_СЛОВА: слово1, слово2, слово3, слово4, слово5
+ТЕМЫ: тема1, тема2  
+КЛЮЧЕВЫЕ_СЛОВА: слово1, слово2, слово3, слово4, слово5  
 
 Входные данные:  
+
 {full_text}"""
         
         try:
@@ -594,7 +567,6 @@ async def analyze_channel(channel_id: int) -> Tuple[List[str], List[str]]:
                 stream=False
             )
             
-            # Парсим ответ
             topics = []
             keywords = []
             
@@ -607,7 +579,6 @@ async def analyze_channel(channel_id: int) -> Tuple[List[str], List[str]]:
                     keywords_text = line.replace('КЛЮЧЕВЫЕ_СЛОВА:', '').strip()
                     keywords = [kw.strip() for kw in keywords_text.split(',') if kw.strip()]
             
-            # Если не удалось распарсить, используем дефолтные значения
             if not topics:
                 topics = ['Бизнес и стартапы', 'Маркетинг, PR, реклама']
             if not keywords:
@@ -618,7 +589,6 @@ async def analyze_channel(channel_id: int) -> Tuple[List[str], List[str]]:
             
         except Exception as e:
             logger.error(f"Ошибка анализа с GPT-4: {e}")
-            # Возвращаем дефолтные значения
             return ['Бизнес и стартапы', 'Маркетинг, PR, реклама'], ['бизнес', 'маркетинг', 'продвижение']
     
     except Exception as e:
@@ -627,7 +597,6 @@ async def analyze_channel(channel_id: int) -> Tuple[List[str], List[str]]:
 
 async def process_found_channels(channels: List[str]):
     """Обработка найденных каналов"""
-    # Получаем клиент из bot_interface
     import bot_interface
     client = bot_interface.bot_data.get('telethon_client')
     
@@ -637,22 +606,19 @@ async def process_found_channels(channels: List[str]):
     
     for username in channels:
         if username in found_channels:
-            continue  # Канал уже был обработан
+            continue
         
         if not search_active:
             break
         
         try:
-            # Проверяем доступность комментариев
             if await check_channel_availability(client, username):
                 logger.info(f"Канал {username} доступен для комментариев")
                 found_channels.add(username)
                 
-                # Сохраняем найденный канал
                 save_search_state()
                 await save_search_state_to_db()
                 
-                # Передаем канал в masslooker
                 try:
                     import masslooker
                     await masslooker.add_channel_to_queue(username)
@@ -665,17 +631,14 @@ async def process_found_channels(channels: List[str]):
         except Exception as e:
             logger.error(f"Ошибка обработки канала {username}: {e}")
         
-        # Небольшая задержка между проверками
         await asyncio.sleep(random.uniform(1, 3))
 
 async def search_loop():
     """Основной цикл поиска каналов"""
     global driver, search_active
     
-    # Загружаем состояние поиска
     state_loaded = load_search_state() or await load_search_state_from_db()
     
-    # Инициализация состояния поиска если не загружено
     if not state_loaded or not should_continue_from_saved_state():
         logger.info("Начинаем новый цикл поиска")
         reset_search_state()
@@ -699,10 +662,9 @@ async def search_loop():
             
             if not keywords or not topics:
                 logger.warning("Ключевые слова или темы не настроены")
-                await asyncio.sleep(300)  # Ждем 5 минут
+                await asyncio.sleep(300)
                 continue
             
-            # Проверяем, завершен ли цикл поиска
             if search_state['current_topic_index'] >= len(topics):
                 logger.info("Цикл поиска завершен, ожидание 30 минут...")
                 reset_search_state()
@@ -711,8 +673,7 @@ async def search_loop():
                 search_state['cycle_start_time'] = datetime.now()
                 search_state['search_session_id'] = f"search_{int(time.time())}"
                 
-                # Ждем 30 минут перед следующим циклом
-                for _ in range(1800):  # 30 минут = 1800 секунд
+                for _ in range(1800):
                     if not search_active:
                         break
                     await asyncio.sleep(1)
@@ -725,7 +686,6 @@ async def search_loop():
                     await asyncio.sleep(60)
                     continue
             
-            # Навигация к поиску каналов (только если драйвер новый)
             current_url = driver.current_url
             if "tgstat.ru/channels/search" not in current_url:
                 if not navigate_to_channel_search(driver):
@@ -735,7 +695,6 @@ async def search_loop():
             
             first_search = search_state['current_topic_index'] == 0 and search_state['current_keyword_index'] == 0
             
-            # Получаем текущую тему и ключевое слово
             current_topic = topics[search_state['current_topic_index']]
             current_keyword = keywords[search_state['current_keyword_index']]
             
@@ -744,32 +703,25 @@ async def search_loop():
                            f"({search_state['current_topic_index'] + 1}/{len(topics)}, "
                            f"{search_state['current_keyword_index'] + 1}/{len(keywords)})")
                 
-                # Выполняем поиск
                 channels = search_channels(driver, current_keyword, current_topic, first_search)
                 
                 if channels:
-                    # Обрабатываем найденные каналы
                     await process_found_channels(channels)
                 
-                # Переходим к следующему ключевому слову
                 search_state['current_keyword_index'] += 1
                 
-                # Если ключевые слова закончились, переходим к следующей теме
                 if search_state['current_keyword_index'] >= len(keywords):
                     search_state['current_keyword_index'] = 0
                     search_state['current_topic_index'] += 1
                 
-                # Сохраняем состояние
                 save_search_state()
                 await save_search_state_to_db()
                 
-                # Задержка между поисками
                 await asyncio.sleep(random.uniform(10, 20))
                 
             except Exception as e:
                 logger.error(f"Ошибка поиска по '{current_keyword}' и '{current_topic}': {e}")
                 
-                # Переходим к следующему поиску даже при ошибке
                 search_state['current_keyword_index'] += 1
                 if search_state['current_keyword_index'] >= len(keywords):
                     search_state['current_keyword_index'] = 0
@@ -803,7 +755,6 @@ async def start_search(settings: dict):
     search_active = True
     current_settings = settings.copy()
     
-    # Проверяем наличие клиента в bot_interface
     try:
         import bot_interface
         client = bot_interface.bot_data.get('telethon_client')
@@ -817,7 +768,6 @@ async def start_search(settings: dict):
         search_active = False
         return
     
-    # Запускаем поиск в отдельной задаче
     asyncio.create_task(search_loop())
     logger.info("Поиск каналов запущен")
 
@@ -828,24 +778,20 @@ async def stop_search():
     logger.info("Остановка поиска каналов...")
     search_active = False
     
-    # Сохраняем финальное состояние
     try:
         save_search_state()
         await save_search_state_to_db()
     except Exception as e:
         logger.error(f"Ошибка сохранения состояния: {e}")
     
-    # Принудительно закрываем драйвер
     if driver:
         try:
-            # Закрываем все окна
             driver.quit()
             logger.info("Драйвер закрыт")
         except Exception as e:
             logger.error(f"Ошибка закрытия драйвера: {e}")
         finally:
             driver = None
-            # Принудительно завершаем процессы Chrome
             try:
                 import subprocess
                 import platform
@@ -873,7 +819,6 @@ def get_statistics():
         'last_search_time': search_state.get('last_search_time')
     }
 
-# Основная функция для тестирования
 async def main():
     """Тестирование модуля"""
     test_settings = {
@@ -883,7 +828,6 @@ async def main():
     
     await start_search(test_settings)
     
-    # Тест в течение 2 минут
     await asyncio.sleep(120)
     
     await stop_search()
